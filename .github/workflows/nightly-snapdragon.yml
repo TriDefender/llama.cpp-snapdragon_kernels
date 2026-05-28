@@ -102,7 +102,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: llama-cpp-snapdragon-${{ steps.info.outputs.tag }}
-          path: llama.cpp/llama-cpp-snapdragon-${{ steps.info.outputs.tag }}.tar.gz
+          path: llama-cpp-snapdragon-${{ steps.info.outputs.tag }}.tar.gz
           retention-days: 90
 
   release:
