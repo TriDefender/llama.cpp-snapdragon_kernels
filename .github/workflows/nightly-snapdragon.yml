@@ -2,7 +2,7 @@ name: Nightly Snapdragon Build
 
 on:
   schedule:
-    - cron: '0 4 * * *'
+    - cron: '11 11 * * *'
   workflow_dispatch:
     inputs:
       llama_cpp_ref:
