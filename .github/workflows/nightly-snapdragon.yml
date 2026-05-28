@@ -92,10 +92,50 @@ jobs:
           echo "Renamed llama-server -> libllama-server.so"
           ls -lh pkg-snapdragon/llama.cpp/bin/
 
-      - name: Package as tar.gz
+      - name: Package selected artifacts
         working-directory: llama.cpp
         run: |
-          cd pkg-snapdragon
+          STAGE="staging/llama.cpp"
+          mkdir -p "$STAGE/bin" "$STAGE/lib"
+
+          # Executable
+          cp pkg-snapdragon/llama.cpp/bin/libllama-server.so "$STAGE/bin/"
+
+          # Required libraries (matches android-gui-wrapper BinaryExtractor)
+          LIBS="
+            libllama.so
+            libllama-common.so
+            libllama-server-impl.so
+            libmtmd.so
+            libggml.so
+            libggml-base.so
+            libggml-cpu.so
+            libggml-opencl.so
+            libggml-hexagon.so
+            libggml-htp-v68.so
+            libggml-htp-v69.so
+            libggml-htp-v73.so
+            libggml-htp-v75.so
+            libggml-htp-v79.so
+            libggml-htp-v81.so
+          "
+
+          for lib in $LIBS; do
+            src="pkg-snapdragon/llama.cpp/lib/$lib"
+            if [ -f "$src" ]; then
+              cp "$src" "$STAGE/lib/"
+              echo "  packed: $lib"
+            else
+              echo "  MISSING: $lib"
+            fi
+          done
+
+          echo ""
+          echo "=== Package contents ==="
+          find "$STAGE" -type f | sort
+          echo ""
+
+          cd staging
           tar -czf "../../llama-cpp-snapdragon-${{ steps.info.outputs.tag }}.tar.gz" llama.cpp/
 
       - name: Upload artifact
