@@ -128,13 +128,13 @@ jobs:
           **Commit:** COMMIT_MSG
 
           **Contents:**
-          - `bin/llama-server` — HTTP inference server
+          - `bin/libllama-server.so` — HTTP inference server (renamed from llama-server for Android packaging)
           - `lib/libggml-hexagon.so` — Hexagon NPU backend
           - `lib/libggml-opencl.so` — OpenCL GPU backend
           - `lib/libggml-htp-v*.so` — HTP kernel libraries
           - `lib/libllama.so`, `lib/libggml.so`, etc.
 
-          **Usage:** Extract and push to Android device. See [android-gui-wrapper](https://github.com/TriDefender/android-gui-wrapper) for the GUI app.
+          **Usage:** Import into [android-gui-wrapper](https://github.com/TriDefender/android-gui-wrapper) via the Kernel Manager, or extract and push to device manually.
           NOTES_EOF
 
           sed -i "s|COMMIT_SHORT|${{ needs.build.outputs.short_sha }}|g" release_notes.md
