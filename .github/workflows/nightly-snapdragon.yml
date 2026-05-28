@@ -16,13 +16,12 @@ concurrency:
 
 env:
   LLAMA_CPP_REPO: ggml-org/llama.cpp
-  CONTAINER_IMAGE: ghcr.io/snapdragon-toolchain/arm64-android:v0.7
 
 jobs:
   build:
     runs-on: ubuntu-latest
     container:
-      image: ${{ env.CONTAINER_IMAGE }}
+      image: ghcr.io/snapdragon-toolchain/arm64-android:v0.7
     defaults:
       run:
         shell: bash
