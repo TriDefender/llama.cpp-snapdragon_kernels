@@ -1,0 +1,166 @@
+name: Nightly Snapdragon Build
+
+on:
+  schedule:
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      llama_cpp_ref:
+        description: 'llama.cpp ref to build (branch, tag, or commit SHA)'
+        required: false
+        default: 'master'
+
+concurrency:
+  group: nightly-snapdragon
+  cancel-in-progress: true
+
+env:
+  LLAMA_CPP_REPO: ggml-org/llama.cpp
+  CONTAINER_IMAGE: ghcr.io/snapdragon-toolchain/arm64-android:v0.7
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ env.CONTAINER_IMAGE }}
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      tag: ${{ steps.info.outputs.tag }}
+      short_sha: ${{ steps.info.outputs.short_sha }}
+      full_sha: ${{ steps.info.outputs.full_sha }}
+      commit_msg: ${{ steps.info.outputs.commit_msg }}
+
+    steps:
+      - name: Determine ref
+        id: ref
+        run: |
+          REF="${{ github.event.inputs.llama_cpp_ref || 'master' }}"
+          echo "ref=$REF" >> "$GITHUB_OUTPUT"
+
+      - name: Clone llama.cpp
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.LLAMA_CPP_REPO }}
+          ref: ${{ steps.ref.outputs.ref }}
+          fetch-depth: 0
+          lfs: false
+          path: llama.cpp
+
+      - name: Get commit info
+        id: info
+        working-directory: llama.cpp
+        run: |
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          FULL_SHA=$(git rev-parse HEAD)
+          COMMIT_MSG=$(git log -1 --pretty=format:'%s' | head -c 200)
+          COMMIT_DATE=$(git log -1 --pretty=format:'%ci' | cut -d' ' -f1)
+          echo "short_sha=$SHORT_SHA" >> "$GITHUB_OUTPUT"
+          echo "full_sha=$FULL_SHA" >> "$GITHUB_OUTPUT"
+          echo "commit_msg=$COMMIT_MSG" >> "$GITHUB_OUTPUT"
+          echo "commit_date=$COMMIT_DATE" >> "$GITHUB_OUTPUT"
+          TAG="b-${COMMIT_DATE}-${SHORT_SHA}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Build llama.cpp for Snapdragon Android
+        id: build
+        working-directory: llama.cpp
+        run: |
+          cp docs/backend/snapdragon/CMakeUserPresets.json .
+          cmake --preset arm64-android-snapdragon-release -B build
+          cmake --build build -j $(nproc)
+          cmake --install build --prefix pkg-snapdragon/llama.cpp
+
+      - name: Verify build artifacts
+        working-directory: llama.cpp
+        run: |
+          echo "=== Binary ==="
+          ls -lh pkg-snapdragon/llama.cpp/bin/
+          echo ""
+          echo "=== Libraries ==="
+          ls -lh pkg-snapdragon/llama.cpp/lib/
+          echo ""
+          echo "=== Checking required files ==="
+          test -f pkg-snapdragon/llama.cpp/bin/llama-server || { echo "ERROR: llama-server not found"; exit 1; }
+          test -f pkg-snapdragon/llama.cpp/lib/libggml-hexagon.so || { echo "ERROR: libggml-hexagon.so not found"; exit 1; }
+          echo "All required artifacts present."
+
+      - name: Rename llama-server to libllama-server.so
+        working-directory: llama.cpp
+        run: |
+          mv pkg-snapdragon/llama.cpp/bin/llama-server pkg-snapdragon/llama.cpp/bin/libllama-server.so
+          echo "Renamed llama-server -> libllama-server.so"
+          ls -lh pkg-snapdragon/llama.cpp/bin/
+
+      - name: Package as tar.gz
+        working-directory: llama.cpp
+        run: |
+          cd pkg-snapdragon
+          tar -czf "../../llama-cpp-snapdragon-${{ steps.info.outputs.tag }}.tar.gz" llama.cpp/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: llama-cpp-snapdragon-${{ steps.info.outputs.tag }}
+          path: llama.cpp/llama-cpp-snapdragon-${{ steps.info.outputs.tag }}.tar.gz
+          retention-days: 90
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: llama-cpp-snapdragon-${{ needs.build.outputs.tag }}
+          path: artifacts
+
+      - name: Prepare release notes
+        id: notes
+        run: |
+          cat > release_notes.md << 'NOTES_EOF'
+          Automated nightly build of llama.cpp with Snapdragon Hexagon/OpenCL backend.
+
+          **Source:** [ggml-org/llama.cpp@COMMIT_SHORT](https://github.com/ggml-org/llama.cpp/commit/COMMIT_FULL)
+          **Commit:** COMMIT_MSG
+
+          **Contents:**
+          - `bin/llama-server` — HTTP inference server
+          - `lib/libggml-hexagon.so` — Hexagon NPU backend
+          - `lib/libggml-opencl.so` — OpenCL GPU backend
+          - `lib/libggml-htp-v*.so` — HTP kernel libraries
+          - `lib/libllama.so`, `lib/libggml.so`, etc.
+
+          **Usage:** Extract and push to Android device. See [android-gui-wrapper](https://github.com/TriDefender/android-gui-wrapper) for the GUI app.
+          NOTES_EOF
+
+          sed -i "s|COMMIT_SHORT|${{ needs.build.outputs.short_sha }}|g" release_notes.md
+          sed -i "s|COMMIT_FULL|${{ needs.build.outputs.full_sha }}|g" release_notes.md
+          sed -i "s|COMMIT_MSG|${{ needs.build.outputs.commit_msg }}|g" release_notes.md
+
+      - name: Check if release exists
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ needs.build.outputs.tag }}" --repo ${{ github.repository }} 2>/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          FILE=$(ls artifacts/*.tar.gz | head -1)
+          gh release create "${{ needs.build.outputs.tag }}" \
+            --repo ${{ github.repository }} \
+            --title "llama.cpp Snapdragon ${{ needs.build.outputs.tag }}" \
+            --notes-file release_notes.md \
+            "$FILE"
